@@ -6,5 +6,8 @@ readme = "README.md"
 requires-python = ">=3.10"
 dependencies = [
     "google-genai>=1.20.0",
+    "instructor>=1.8.3",
+    "jsonref>=1.1.0",
+    "pydantic>=2.11.7",
     "python-dotenv>=1.1.0",
 ]

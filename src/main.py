@@ -1,8 +1,10 @@
 import os
 import argparse
 import time
+from typing import List
 from dotenv import load_dotenv
-from google import genai # type: ignore
+from pydantic import BaseModel
+import instructor
 
 # Load environment variables from .env file
 load_dotenv()
@@ -14,7 +16,11 @@ def read_file(file_path: str) -> str:
     with open(file_path, 'r', encoding='utf-8') as file:
         return file.read()
 
-def analyze_content(transcript: str) -> str:
+class FlaggedText(BaseModel):
+    flagged_text: str
+    reason: str
+
+def analyze_content(transcript: str) -> List[FlaggedText]:
     example_flags = read_file(r"src/prompts/human_flags_1017.txt")
     claude_flags = read_file(r"src/prompts/claude_flags_1017.txt")
     example_transcript = read_file(r"src/prompts/transcript_1017.txt")
@@ -55,26 +61,27 @@ def analyze_content(transcript: str) -> str:
 
     prompt = f"{prompt1}\n\n{prompt2}\n\n{prompt3}\n\n{prompt4}"
 
-    return analyze_with_gemini(prompt)
+    analysis = analyze_with_gemini(prompt)
+    
+    return analysis
 
-def analyze_with_gemini(prompt: str) -> str:
-    client = genai.Client(api_key=GOOGLE_API_KEY)
-    response = client.models.generate_content(model="models/gemini-2.5-flash-preview-05-20", contents=prompt)
-    if response.text:
-        return response.text
-    else:
-        raise ValueError("Error generating analysis.")
+
+def analyze_with_gemini(prompt: str) -> List[FlaggedText]:
+    client = instructor.from_provider("google/gemini-2.5-flash-preview-04-17")
+    result = client.chat.completions.create(
+        response_model=List[FlaggedText],
+        messages=[{"role": "user", "content": prompt}]
+    )
+    # Instructor handles and returns a final result, we don't need to await
+    return result # type: ignore
+
 
 def write_analysis_to_file(video_path: str, transcript: str, analysis: str) -> str:
     # Create a filename based on the input video name
     base_name = os.path.splitext(os.path.basename(video_path))[0]
     output_filename = f"analysis/{base_name}_analysis.txt"
-    
     with open(output_filename, 'w', encoding='utf-8') as f:
-        f.write(f"Analysis for video: {video_path}\n\n")
-        f.write("\n\nContent Analysis:\n")
         f.write(analysis)
-    
     return output_filename
 
 def main(video_path: str) -> None:
@@ -88,11 +95,21 @@ def main(video_path: str) -> None:
     start_time = time.time()
     analysis = analyze_content(transcript)
     end_time = time.time()
-    
+
+    # Convert the analysis to a JSON-like string
+    # This is temporary until we setup the proper pipeline
+    analysis_to_str = "[\n"
+    for i, item in enumerate(analysis):
+        analysis_to_str += f'  {{\n    "flagged_text": "{item.flagged_text}",\n    "reason": "{item.reason}"\n  }}'
+        if i < len(analysis) - 1:
+            analysis_to_str += ","
+        analysis_to_str += "\n"
+    analysis_to_str += "]"
+
     analysis_time = end_time - start_time
     print(f"Analysis done in {analysis_time:.2f} seconds")
     
-    write_analysis_to_file(video_path, transcript, analysis)
+    write_analysis_to_file(video_path, transcript, analysis_to_str)
     print(f"Analysis written to analysis/{video_path}_analysis.txt")
 
 def cli():
