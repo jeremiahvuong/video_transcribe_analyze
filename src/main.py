@@ -12,69 +12,40 @@ load_dotenv()
 # Get API keys from environment variables
 GOOGLE_API_KEY = os.getenv("GOOGLE_API_KEY")
 
-def read_file(file_path: str) -> str:
-    with open(file_path, 'r', encoding='utf-8') as file:
-        return file.read()
-
 class FlaggedText(BaseModel):
     flagged_text: str
     reason: str
 
-def analyze_content(transcript: str) -> List[FlaggedText]:
-    example_flags = read_file(r"src/prompts/human_flags_1017.txt")
-    claude_flags = read_file(r"src/prompts/claude_flags_1017.txt")
-    example_transcript = read_file(r"src/prompts/transcript_1017.txt")
+def read_file(file_path: str) -> str:
+    with open(file_path, 'r', encoding='utf-8') as file:
+        return file.read()
 
-    prompt1 = f"""
-    Go through the entire transcript and point out 
-    1. any profanity (words like God, shit, fuck, etc) 
-    2. personal information related to the professor,
-    3. specific incidents, 
-    4. controversial statements that show certain places or people in bad light, 
-    
-    and flag out everything you can find.
-    """
+SYSTEM_PROMPT = f"""
+Given a transcript of a lecture, flag ALL of the following:
+1. any profanity (words like God, shit, fuck, etc) 
+2. personal information related to the professor,
+3. specific incidents, 
+4. controversial statements that show certain places or people in bad light, 
+5. and any other information that is not appropriate for a public platform.
+"""
 
-    prompt2 = f"""
-    Here is an example transcript:
-    {example_transcript}
-    and here are just of the flags found by a human:
-    {example_flags}
-    """
-
-    prompt3 = f"""
-    Here are some additional flags found by me which match the criteria of the prompt:
-    {claude_flags}
-    """
-
-    prompt4 = f"""
-    Now go through this entire transcript and get similar flags.
-
-    Be very sensitive, flag anything if you think that meets the criteria above.
-
-    For the transcript below, return the specific sentences in quotes, and the reason you flagged them:
-
-    The main transcript:
-
-    {transcript}.
-    """
-
-    prompt = f"{prompt1}\n\n{prompt2}\n\n{prompt3}\n\n{prompt4}"
-
-    analysis = analyze_with_gemini(prompt)
-    
-    return analysis
-
-
-def analyze_with_gemini(prompt: str) -> List[FlaggedText]:
+def analyze_with_gemini(transcript: str) -> List[FlaggedText]:
     client = instructor.from_provider("google/gemini-2.5-flash-preview-04-17")
     result = client.chat.completions.create(
         response_model=List[FlaggedText],
-        messages=[{"role": "user", "content": prompt}]
+        messages=[
+            {
+                "role": "system",
+                "content": SYSTEM_PROMPT
+            },
+            {
+                "role": "user",
+                "content": f"Analyze the following the following text: <text>{transcript}</text>"
+            }
+        ]
     )
     # Instructor handles and returns a final result, we don't need to await
     return result # type: ignore
-
 
 def write_analysis_to_file(video_path: str, transcript: str, analysis: str) -> str:
     # Create a filename based on the input video name
@@ -93,7 +64,7 @@ def main(video_path: str) -> None:
     print(f"Generating analysis...")
     
     start_time = time.time()
-    analysis = analyze_content(transcript)
+    analysis = analyze_with_gemini(transcript)
     end_time = time.time()
 
     # Convert the analysis to a JSON-like string
