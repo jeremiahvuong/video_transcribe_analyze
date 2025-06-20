@@ -5,20 +5,20 @@ from typing import List
 from dotenv import load_dotenv
 from pydantic import BaseModel
 import instructor
+from openai import OpenAI
+import re
+from concurrent.futures import ThreadPoolExecutor, as_completed
 
 # Load environment variables from .env file
 load_dotenv()
 
 # Get API keys from environment variables
 GOOGLE_API_KEY = os.getenv("GOOGLE_API_KEY")
+OPENROUTER_API_KEY = os.getenv("OPENROUTER_API_KEY")
 
 class FlaggedText(BaseModel):
     flagged_text: str
     reason: str
-
-def read_file(file_path: str) -> str:
-    with open(file_path, 'r', encoding='utf-8') as file:
-        return file.read()
 
 SYSTEM_PROMPT = f"""
 Given a transcript of a lecture, flag ALL of the following:
@@ -29,9 +29,18 @@ Given a transcript of a lecture, flag ALL of the following:
 5. and any other information that is not appropriate for a public platform.
 """
 
-def analyze_with_gemini(transcript: str) -> List[FlaggedText]:
-    client = instructor.from_provider("google/gemini-2.5-flash-preview-04-17")
-    result = client.chat.completions.create(
+google_client = instructor.from_provider("google/gemini-2.5-flash-preview-04-17")
+openrouter_client = instructor.from_openai(
+    client=OpenAI(
+        base_url="https://openrouter.ai/api/v1",
+        api_key=OPENROUTER_API_KEY,
+    ),
+    mode=instructor.Mode.JSON, # patch for most providers @SEE: https://github.com/567-labs/instructor/issues/676
+)
+
+def analyze(transcript: str) -> List[FlaggedText]:
+    result = openrouter_client.chat.completions.create(
+        model="google/gemini-2.5-flash-preview-05-20",
         response_model=List[FlaggedText],
         messages=[
             {
@@ -40,9 +49,9 @@ def analyze_with_gemini(transcript: str) -> List[FlaggedText]:
             },
             {
                 "role": "user",
-                "content": f"Analyze the following the following text: <text>{transcript}</text>"
+                "content": f"Analyze the following the following transcript: <transcript>{transcript}</transcript>"
             }
-        ]
+        ],
     )
     # Instructor handles and returns a final result, we don't need to await
     return result # type: ignore
@@ -55,6 +64,46 @@ def write_analysis_to_file(video_path: str, transcript: str, analysis: str) -> s
         f.write(analysis)
     return output_filename
 
+def read_file(file_path: str) -> str:
+    with open(file_path, 'r', encoding='utf-8') as file:
+        return file.read()
+
+def chunk_transcript(transcript: str) -> List[str]:
+    """
+    Splits the transcript into chunks of ~500 words.
+    Sentences should not be split across chunks => we cut off that last sentence such that a chunk may have >500 words.
+    As such, there may be a remainder very small chunk at the end.
+    """
+    
+    # Split transcript into sentences using common sentence endings
+    sentences = re.split(r'(?<=[.!?])\s+', transcript.strip())
+    
+    chunks: List[str] = []
+    current_chunk: List[str] = []
+    current_word_count = 0
+    target_words = 500
+    
+    for sentence in sentences:
+        # 1) Count words in the current sentence
+        sentence_word_count = len(sentence.split())
+        
+        # 2) If adding this sentence would exceed 500 words, start a new chunk
+        if current_word_count + sentence_word_count > target_words and current_chunk:
+            # Join current chunk and add to chunks
+            chunks.append(' '.join(current_chunk))
+            current_chunk = [sentence]
+            current_word_count = sentence_word_count
+        else:
+            # Add sentence to current chunk
+            current_chunk.append(sentence)
+            current_word_count += sentence_word_count
+    
+    # 3) Add the last (remainder) chunk if it has content
+    if current_chunk:
+        chunks.append(' '.join(current_chunk))
+    
+    return chunks
+
 def main(video_path: str) -> None:
     if not os.path.exists(video_path):
         raise FileNotFoundError(f"The video file '{video_path}' does not exist.")
@@ -64,7 +113,15 @@ def main(video_path: str) -> None:
     print(f"Generating analysis...")
     
     start_time = time.time()
-    analysis = analyze_with_gemini(transcript)
+    chunks = chunk_transcript(transcript)
+
+    # Analyze each chunk in parallel
+    analysis: List[FlaggedText] = []
+    with ThreadPoolExecutor() as executor:
+        futures = [executor.submit(analyze, chunk) for chunk in chunks]
+        for future in as_completed(futures):
+            analysis.extend(future.result())
+
     end_time = time.time()
 
     # Convert the analysis to a JSON-like string
