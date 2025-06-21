@@ -8,6 +8,7 @@ import instructor
 from openai import OpenAI
 import re
 from concurrent.futures import ThreadPoolExecutor, as_completed
+import whisper # type: ignore
 
 # Load environment variables from .env file
 load_dotenv()
@@ -27,9 +28,8 @@ class FlaggedText(BaseModel):
     )
 
 SYSTEM_PROMPT = f"""
-You are a world-class content moderator.
-Given a transcript of a lecture, flag aggressively ALL of the following:
-1. any profanity (words like God, shit, fuck, etc) 
+Given a transcript of a lecture, flag ALL of the following:
+1. any profanity (words like shit, fuck, etc) 
 2. personal information related to the professor,
 3. specific incidents, 
 4. controversial statements that show certain places or people in bad light, 
@@ -45,6 +45,25 @@ openrouter_client = instructor.from_openai(
     ),
     mode=instructor.Mode.JSON, # patch for most providers @SEE: https://github.com/567-labs/instructor/issues/676
 )
+
+def transcribe_video(video_path: str) -> str:
+    """Transcribe a video file using Whisper."""
+    if not os.path.exists(video_path):
+        raise FileNotFoundError(f"The video file '{video_path}' does not exist.")
+    
+    print(f"Loading Whisper model...")
+    model = whisper.load_model("base")
+    
+    print(f"Transcribing {video_path}...")
+    result = model.transcribe(video_path) # type: ignore
+
+    if not result:
+        raise RuntimeError("Whisper failed to transcribe the video.")
+    
+    transcript_text: str = result["text"] # type: ignore
+    print(f"Transcription completed. Length: {len(transcript_text)} characters")
+    
+    return transcript_text
 
 def analyze(transcript: str) -> List[FlaggedText]:
     result = openrouter_client.chat.completions.create(
@@ -69,6 +88,10 @@ def write_analysis_to_file(video_path: str, transcript: str, analysis: str) -> s
     # Create a filename based on the input video name
     base_name = os.path.splitext(os.path.basename(video_path))[0]
     output_filename = f"analysis/{base_name}_analysis.txt"
+    
+    # Ensure analysis directory exists
+    os.makedirs("analysis", exist_ok=True)
+    
     with open(output_filename, 'w', encoding='utf-8') as f:
         f.write(analysis)
     return output_filename
@@ -133,8 +156,7 @@ def main(video_path: str) -> None:
     if not os.path.exists(video_path):
         raise FileNotFoundError(f"The video file '{video_path}' does not exist.")
     
-    # transcript = transcribe_video(video_path)
-    transcript = read_file(r"src/prompts/transcript_1017.txt")
+    transcript = transcribe_video(video_path)
     
     start_time = time.time()
     chunks = chunk_transcript(transcript)
@@ -157,7 +179,7 @@ def main(video_path: str) -> None:
     print(f"Analysis done in {analysis_time:.2f} seconds")
     
     write_analysis_to_file(video_path, transcript, analysis_to_str)
-    print(f"Analysis written to analysis/{video_path}_analysis.txt")
+    print(f"Analysis written to analysis/{os.path.splitext(os.path.basename(video_path))[0]}_analysis.txt")
 
 def cli():
     parser = argparse.ArgumentParser(description="Transcribe and analyze a video.")
