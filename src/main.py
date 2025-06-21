@@ -19,6 +19,9 @@ load_dotenv()
 GOOGLE_API_KEY = os.getenv("GOOGLE_API_KEY")
 OPENROUTER_API_KEY = os.getenv("OPENROUTER_API_KEY")
 
+# Set up profanity filter with default words + whitelist
+profanity.load_censor_words(whitelist_words=["bit", "bits", "P", "P set", "bi", "XX", "XY", "XXX"]) # type: ignore
+
 # Note: We still flag profanity for redundancy
 class FlaggedText(BaseModel):
     flagged_text: str = Field(
