@@ -1,14 +1,16 @@
-import os
 import argparse
-import time
-from typing import List, Literal
-from dotenv import load_dotenv
-from pydantic import BaseModel, Field
-import instructor
-from openai import OpenAI
+import os
 import re
+import time
 from concurrent.futures import ThreadPoolExecutor, as_completed
-import whisper # type: ignore
+from typing import List, Literal
+
+import instructor
+import whisper  # type: ignore
+from dotenv import load_dotenv
+from openai import OpenAI
+from pydantic import BaseModel, Field
+from better_profanity import profanity # type: ignore
 
 # Load environment variables from .env file
 load_dotenv()
@@ -17,6 +19,7 @@ load_dotenv()
 GOOGLE_API_KEY = os.getenv("GOOGLE_API_KEY")
 OPENROUTER_API_KEY = os.getenv("OPENROUTER_API_KEY")
 
+# Note: We still flag profanity for redundancy
 class FlaggedText(BaseModel):
     flagged_text: str = Field(
         ...,
@@ -26,6 +29,8 @@ class FlaggedText(BaseModel):
         ...,
         description="The reason for the flagged text.",
     )
+
+flagged_text: List[FlaggedText] = []
 
 SYSTEM_PROMPT = f"""
 Given a transcript of a lecture, flag ALL of the following:
@@ -101,9 +106,9 @@ def read_file(file_path: str) -> str:
     with open(file_path, 'r', encoding='utf-8') as file:
         return file.read()
 
-def chunk_transcript(transcript: str) -> List[str]:
+def process_and_chunk_transcript(transcript: str) -> List[str]:
     """
-    Splits the transcript into chunks of ~TARGET_WORDS words.
+    Flags profanity, then splits the transcript into chunks of ~TARGET_WORDS words.
     Sentences should not be split across chunks => we cut off that last sentence such that a chunk may have >TARGET_WORDS words.
     As such, there may be a remainder very small chunk at the end.
     """
@@ -120,10 +125,17 @@ def chunk_transcript(transcript: str) -> List[str]:
     current_word_count = 0
     
     for sentence in sentences:
-        # 1) Count words in the current sentence
+        # 1) Flag and delete sentence if it contains profanity
+        if profanity.contains_profanity(sentence): # type: ignore # returns bool
+            flagged_text.append(FlaggedText(flagged_text=sentence, reason="profanity"))
+            # Delete the sentence so it doesn't get added to the chunk
+            transcript = transcript.replace(sentence, "")
+            continue
+
+        # 2) Count words in the current sentence
         sentence_word_count = len(sentence.split())
         
-        # 2) If adding this sentence would exceed TARGET_WORDS words, start a new chunk
+        # 3) If adding this sentence would exceed TARGET_WORDS words, start a new chunk
         if current_word_count + sentence_word_count > TARGET_WORDS and current_chunk:
             # Join current chunk and add to chunks
             chunks.append(' '.join(current_chunk))
@@ -133,6 +145,9 @@ def chunk_transcript(transcript: str) -> List[str]:
             # Add sentence to current chunk
             current_chunk.append(sentence)
             current_word_count += sentence_word_count
+
+    print (f"Sentences pre-flagged: {len(flagged_text)}")
+    print(f"Sentences pre-flagged for profanity: {flagged_text}")
     
     # 3) Add the last (remainder) chunk if it has content
     if current_chunk:
@@ -159,25 +174,24 @@ def main(video_path: str) -> None:
     if not os.path.exists(video_path):
         raise FileNotFoundError(f"The video file '{video_path}' does not exist.")
     
+    # 1) Transcribe the video
     transcript = transcribe_video(video_path)
 
+    # 2) Chunk and analyze each chunk in parallel
     start_time = time.time()
-    chunks = chunk_transcript(transcript)
-
+    chunks = process_and_chunk_transcript(transcript)
     print(f"Starting analysis with {len(chunks)} chunks...")
 
-    # Analyze each chunk in parallel
-    analysis: List[FlaggedText] = []
     with ThreadPoolExecutor() as executor:
         futures = [executor.submit(analyze, chunk) for chunk in chunks]
         for future in as_completed(futures):
-            analysis.extend(future.result())
+            flagged_text.extend(future.result())
 
     analysis_time = time.time() - start_time
     print(f"Analysis done in {analysis_time:.2f} seconds")
 
-    # Temporary write to file until we setup the proper pipeline
-    analysis_to_str = flaggedtext_to_formatted(analysis)
+    # 3) Temporary write to file until we setup the proper pipeline
+    analysis_to_str = flaggedtext_to_formatted(flagged_text)
     write_analysis_to_file(video_path, transcript, analysis_to_str)
     print(f"Analysis written to analysis/{os.path.splitext(os.path.basename(video_path))[0]}_analysis.txt")
 
