@@ -36,6 +36,7 @@ Given a transcript of a lecture, flag ALL of the following:
 5. and any other information that is not appropriate for a public platform.
 """
 
+# Gemini 2.5 Flash seems to be the best perf for cost.
 google_client = instructor.from_provider("google/gemini-2.5-flash-preview-04-17")
 
 openrouter_client = instructor.from_openai(
@@ -106,7 +107,10 @@ def chunk_transcript(transcript: str) -> List[str]:
     Sentences should not be split across chunks => we cut off that last sentence such that a chunk may have >TARGET_WORDS words.
     As such, there may be a remainder very small chunk at the end.
     """
-    TARGET_WORDS = 300 # experimental value
+
+    # Experimental value, we chunk transcript not only to run parallel,
+    # but to also get more accurate results. In long contexts the LLM skips over content.
+    TARGET_WORDS = 300
 
     # Split transcript into sentences using common sentence endings
     sentences = re.split(r'(?<=[.!?])\s+', transcript.strip())
@@ -119,7 +123,7 @@ def chunk_transcript(transcript: str) -> List[str]:
         # 1) Count words in the current sentence
         sentence_word_count = len(sentence.split())
         
-        # 2) If adding this sentence would exceed 500 words, start a new chunk
+        # 2) If adding this sentence would exceed TARGET_WORDS words, start a new chunk
         if current_word_count + sentence_word_count > TARGET_WORDS and current_chunk:
             # Join current chunk and add to chunks
             chunks.append(' '.join(current_chunk))
@@ -139,7 +143,6 @@ def chunk_transcript(transcript: str) -> List[str]:
 def flaggedtext_to_formatted(text: List[FlaggedText]) -> str:
     """
     Convert the analysis to a JSON-like string to be written to a file
-    This is temporary until we setup the proper pipeline
     """
     analysis_to_str = "[\n"
     for i, item in enumerate(text):
@@ -157,7 +160,7 @@ def main(video_path: str) -> None:
         raise FileNotFoundError(f"The video file '{video_path}' does not exist.")
     
     transcript = transcribe_video(video_path)
-    
+
     start_time = time.time()
     chunks = chunk_transcript(transcript)
 
@@ -170,14 +173,11 @@ def main(video_path: str) -> None:
         for future in as_completed(futures):
             analysis.extend(future.result())
 
-    end_time = time.time()
-
-    # Temporary until we setup the proper pipeline
-    analysis_to_str = flaggedtext_to_formatted(analysis)
-
-    analysis_time = end_time - start_time
+    analysis_time = time.time() - start_time
     print(f"Analysis done in {analysis_time:.2f} seconds")
-    
+
+    # Temporary write to file until we setup the proper pipeline
+    analysis_to_str = flaggedtext_to_formatted(analysis)
     write_analysis_to_file(video_path, transcript, analysis_to_str)
     print(f"Analysis written to analysis/{os.path.splitext(os.path.basename(video_path))[0]}_analysis.txt")
 
