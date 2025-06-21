@@ -30,10 +30,10 @@ class FlaggedText(BaseModel):
 SYSTEM_PROMPT = f"""
 Given a transcript of a lecture, flag ALL of the following:
 1. any profanity (words like shit, fuck, etc) 
-2. personal information related to the professor,
-3. specific incidents, 
-4. controversial statements that show certain places or people in bad light, 
-5. and any other information that is not appropriate for a public platform.
+2. personal information related to the professor, students, or other individuals
+3. specific incidents, events, or topics that are not suitable for a public platform
+4. controversial statements that show certain places or people in bad light
+5. and any other information that is not appropriate for a public platform
 """
 
 # Gemini 2.5 Flash seems to be the best perf for cost.
@@ -74,7 +74,7 @@ def analyze(transcript: str) -> List[FlaggedText]:
         messages=[
             {
                 "role": "system",
-                "content": SYSTEM_PROMPT
+                "content": SYSTEM_PROMPT,
             },
             {
                 "role": "user",
@@ -108,7 +108,7 @@ def chunk_transcript(transcript: str) -> List[str]:
     As such, there may be a remainder very small chunk at the end.
     """
 
-    # Experimental value, we chunk transcript not only to run parallel,
+    # Experimental value, we chunk transcript not only to run in parallel,
     # but to also get more accurate results. In long contexts the LLM skips over content.
     TARGET_WORDS = 300
 
