@@ -113,6 +113,22 @@ def chunk_transcript(transcript: str) -> List[str]:
     
     return chunks
 
+def flaggedtext_to_formatted(text: List[FlaggedText]) -> str:
+    """
+    Convert the analysis to a JSON-like string to be written to a file
+    This is temporary until we setup the proper pipeline
+    """
+    analysis_to_str = "[\n"
+    for i, item in enumerate(text):
+        analysis_to_str += f'  {{\n    "flagged_text": "{item.flagged_text}",\n    "reason": "{item.reason}"\n  }}'
+        if i < len(text) - 1:
+            analysis_to_str += ","
+        analysis_to_str += "\n"
+    analysis_to_str += "]"
+
+    return analysis_to_str
+
+
 def main(video_path: str) -> None:
     if not os.path.exists(video_path):
         raise FileNotFoundError(f"The video file '{video_path}' does not exist.")
@@ -134,15 +150,8 @@ def main(video_path: str) -> None:
 
     end_time = time.time()
 
-    # Convert the analysis to a JSON-like string to be written to a file
-    # This is temporary until we setup the proper pipeline
-    analysis_to_str = "[\n"
-    for i, item in enumerate(analysis):
-        analysis_to_str += f'  {{\n    "flagged_text": "{item.flagged_text}",\n    "reason": "{item.reason}"\n  }}'
-        if i < len(analysis) - 1:
-            analysis_to_str += ","
-        analysis_to_str += "\n"
-    analysis_to_str += "]"
+    # Temporary until we setup the proper pipeline
+    analysis_to_str = flaggedtext_to_formatted(analysis)
 
     analysis_time = end_time - start_time
     print(f"Analysis done in {analysis_time:.2f} seconds")
