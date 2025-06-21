@@ -1,9 +1,9 @@
 import os
 import argparse
 import time
-from typing import List
+from typing import List, Literal
 from dotenv import load_dotenv
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 import instructor
 from openai import OpenAI
 import re
@@ -17,11 +17,18 @@ GOOGLE_API_KEY = os.getenv("GOOGLE_API_KEY")
 OPENROUTER_API_KEY = os.getenv("OPENROUTER_API_KEY")
 
 class FlaggedText(BaseModel):
-    flagged_text: str
-    reason: str
+    flagged_text: str = Field(
+        ...,
+        description="The sentence of text that was flagged.",
+    )
+    reason: Literal["profanity", "personal_information", "specific_events", "controversial_statements", "other_inappropriate_content"] = Field(
+        ...,
+        description="The reason for the flagged text.",
+    )
 
 SYSTEM_PROMPT = f"""
-Given a transcript of a lecture, flag ALL of the following:
+You are a world-class content moderator.
+Given a transcript of a lecture, flag aggressively ALL of the following:
 1. any profanity (words like God, shit, fuck, etc) 
 2. personal information related to the professor,
 3. specific incidents, 
@@ -30,6 +37,7 @@ Given a transcript of a lecture, flag ALL of the following:
 """
 
 google_client = instructor.from_provider("google/gemini-2.5-flash-preview-04-17")
+
 openrouter_client = instructor.from_openai(
     client=OpenAI(
         base_url="https://openrouter.ai/api/v1",
@@ -41,6 +49,7 @@ openrouter_client = instructor.from_openai(
 def analyze(transcript: str) -> List[FlaggedText]:
     result = openrouter_client.chat.completions.create(
         model="google/gemini-2.5-flash-preview-05-20",
+        temperature=0.0, # no randomness
         response_model=List[FlaggedText],
         messages=[
             {
@@ -49,7 +58,7 @@ def analyze(transcript: str) -> List[FlaggedText]:
             },
             {
                 "role": "user",
-                "content": f"Analyze the following the following transcript: <transcript>{transcript}</transcript>"
+                "content": f"Flag inappropriate content in the following transcript: <BEGIN TRANSCRIPT>{transcript}<END TRANSCRIPT>"
             }
         ],
     )
@@ -70,25 +79,25 @@ def read_file(file_path: str) -> str:
 
 def chunk_transcript(transcript: str) -> List[str]:
     """
-    Splits the transcript into chunks of ~500 words.
-    Sentences should not be split across chunks => we cut off that last sentence such that a chunk may have >500 words.
+    Splits the transcript into chunks of ~TARGET_WORDS words.
+    Sentences should not be split across chunks => we cut off that last sentence such that a chunk may have >TARGET_WORDS words.
     As such, there may be a remainder very small chunk at the end.
     """
-    
+    TARGET_WORDS = 300 # experimental value
+
     # Split transcript into sentences using common sentence endings
     sentences = re.split(r'(?<=[.!?])\s+', transcript.strip())
     
     chunks: List[str] = []
     current_chunk: List[str] = []
     current_word_count = 0
-    target_words = 500
     
     for sentence in sentences:
         # 1) Count words in the current sentence
         sentence_word_count = len(sentence.split())
         
         # 2) If adding this sentence would exceed 500 words, start a new chunk
-        if current_word_count + sentence_word_count > target_words and current_chunk:
+        if current_word_count + sentence_word_count > TARGET_WORDS and current_chunk:
             # Join current chunk and add to chunks
             chunks.append(' '.join(current_chunk))
             current_chunk = [sentence]
@@ -110,10 +119,11 @@ def main(video_path: str) -> None:
     
     # transcript = transcribe_video(video_path)
     transcript = read_file(r"src/prompts/transcript_1017.txt")
-    print(f"Generating analysis...")
     
     start_time = time.time()
     chunks = chunk_transcript(transcript)
+
+    print(f"Starting analysis with {len(chunks)} chunks...")
 
     # Analyze each chunk in parallel
     analysis: List[FlaggedText] = []
@@ -124,7 +134,7 @@ def main(video_path: str) -> None:
 
     end_time = time.time()
 
-    # Convert the analysis to a JSON-like string
+    # Convert the analysis to a JSON-like string to be written to a file
     # This is temporary until we setup the proper pipeline
     analysis_to_str = "[\n"
     for i, item in enumerate(analysis):
