@@ -37,11 +37,11 @@ flagged_text: List[FlaggedText] = []
 
 SYSTEM_PROMPT = f"""
 Given a transcript of a lecture, flag ALL of the following:
-1. any profanity (words like shit, fuck, etc) 
-2. personal information related to the professor, students, or other individuals
-3. specific incidents, events, or topics that are not suitable for a public platform
-4. controversial statements that show certain places or people in bad light
-5. and any other information that is not appropriate for a public platform
+profanity: any words like shit, fuck, etc
+personal_information: private information related to the professor, students, or other individuals
+specific_incidents: specific incidents, events, or topics that are not suitable for a public platform
+controversial_statements: controversial statements that show certain places or people in bad light
+other_inappropriate_content: any other information that is not appropriate for a public platform
 """
 
 # Gemini 2.5 Flash seems to be the best perf for cost.
